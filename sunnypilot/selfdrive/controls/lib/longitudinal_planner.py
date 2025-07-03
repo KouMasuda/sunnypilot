@@ -9,6 +9,7 @@ from cereal import messaging, custom
 from opendbc.car import structs
 from openpilot.selfdrive.car.cruise import V_CRUISE_UNSET
 from openpilot.sunnypilot.selfdrive.controls.lib.dec.dec import DynamicExperimentalController
+from openpilot.sunnypilot.selfdrive.controls.lib.vision_turn_controller import VisionTurnController
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit_controller.speed_limit_controller import SpeedLimitController
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
 from openpilot.sunnypilot.models.helpers import get_active_bundle
@@ -21,6 +22,7 @@ class LongitudinalPlannerSP:
     self.events_sp = EventsSP()
 
     self.dec = DynamicExperimentalController(CP, mpc)
+    self.v_tsc = VisionTurnController(CP)
     self.slc = SpeedLimitController(CP)
     model_bundle = get_active_bundle()
     self.generation = model_bundle.generation if model_bundle is not None else None
@@ -42,8 +44,17 @@ class LongitudinalPlannerSP:
 
     v_cruise_slc = self.slc.speed_limit_offseted if self.slc.is_active else V_CRUISE_UNSET
 
-    v_cruise_final = min(v_cruise, v_cruise_slc)
+    self.v_tsc.update(sm, sm['carControl'].enabled, v_ego, a_ego, v_cruise)
+    v_cruise_v_tsc = self.v_tsc.v_turn if self.v_tsc.is_active else V_CRUISE_UNSET
 
+    cruise_speeds = [v_cruise]
+
+    if self.v_tsc.is_active and v_cruise_v_tsc != V_CRUISE_UNSET:
+      cruise_speeds.append(v_cruise_v_tsc)
+    if self.slc.is_active and v_cruise_slc != V_CRUISE_UNSET:
+      cruise_speeds.append(v_cruise_slc)
+
+    v_cruise_final = min(cruise_speeds)
     return v_cruise_final
 
   def update(self, sm: messaging.SubMaster) -> None:
@@ -62,6 +73,13 @@ class LongitudinalPlannerSP:
     dec.state = DecState.blended if self.dec.mode() == 'blended' else DecState.acc
     dec.enabled = self.dec.enabled()
     dec.active = self.dec.active()
+
+    # Vision Turn Speed Control
+    visionTurnSpeedControl = longitudinalPlanSP.visionTurnSpeedControl
+    visionTurnSpeedControl.state = self.v_tsc.state
+    visionTurnSpeedControl.velocity = float(self.v_tsc.v_turn)
+    visionTurnSpeedControl.currentLateralAccel = float(self.v_tsc.current_lat_acc)
+    visionTurnSpeedControl.maxPredictedLateralAccel = float(self.v_tsc.max_pred_lat_acc)
 
     # Speed Limit Control
     slc = longitudinalPlanSP.slc
