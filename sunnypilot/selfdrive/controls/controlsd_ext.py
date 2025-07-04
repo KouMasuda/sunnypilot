@@ -56,12 +56,25 @@ class ControlsExt:
       CC_SP.leadDistance = leadOne.dRel if leadOne.status else 0.0
       CC_SP.leadRelSpeed = leadOne.vRel if leadOne.status else 0.0
 
+  def _set_custom_lane_positioning(self, CC_SP: custom.CarControlSP,  sm: messaging.SubMaster) -> None:
+    """ Update custom LanePositioning in CarControlSP. """
+    CC_SP.lanelineLeftY = 0.0
+    CC_SP.lanelineRightY = 0.0
+    modelv2 = sm['modelV2']
+
+    if len(modelv2.laneLines):
+      if modelv2.laneLineProbs[1] > 0.5 and modelv2.laneLineProbs[2] > 0.5:
+        CC_SP.lanelineLeftY = modelv2.laneLines[1].y[0]
+        CC_SP.lanelineRightY = modelv2.laneLines[2].y[0]
 
   def state_control_ext(self, sm: messaging.SubMaster) -> custom.CarControlSP:
     CC_SP = custom.CarControlSP.new_message()
 
     # Custom LeadVehicle state
     self._set_custom_lead_vehicle_state(CC_SP, sm)
+
+    # Custom Laneline Positioning
+    self._set_custom_lane_positioning(CC_SP, sm)
 
     # MADS state
     CC_SP.mads = sm['selfdriveStateSP'].mads
