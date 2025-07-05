@@ -170,6 +170,35 @@ class DynamicExperimentalController:
       alpha=1.1,
       smoothing_factor=0.5
     )
+
+    # For tracking lead vehicle distance
+    self._lead_dist_filter = SmoothKalmanFilter(
+      measurement_noise=0.3,
+      process_noise=2.0,           # Higher because distance can change rapidly
+      alpha=1.1,                    # Forget old distance measurements faster
+      smoothing_factor=0.5
+    )
+    self._lead_dist = 0.0
+
+    # For tracking lead vehicle relative velocity
+    self._lead_vel_filter = SmoothKalmanFilter(
+      measurement_noise=0.2,
+      process_noise=1.0,           # Higher for velocity changes
+      alpha=1.2,                    # Forget old velocity measurements faster
+      smoothing_factor=0.5
+    )
+    self._lead_rel_vel = 0.0
+
+    # Acceleration filter to detect rapid deceleration of lead
+    self._lead_accel_filter = SmoothKalmanFilter(
+      measurement_noise=0.3,
+      process_noise=2.0,           # Higher for acceleration changes
+      alpha=1.3,                    # Forget old acceleration data quickly
+      smoothing_factor=0.5
+    )
+    self._lead_accel = 0.0
+    self._prev_lead_vel = 0.0
+
     self._has_lead_filtered = False
     self._has_slow_down = False
     self._has_slowness = False
@@ -187,6 +216,16 @@ class DynamicExperimentalController:
   def _read_params(self) -> None:
     if self._frame % int(1. / DT_MDL) == 0:
       self._enabled = self._params.get_bool("DynamicExperimentalControl")
+      self._standstill_param = self._params.get_bool("DynamicExperimentalStandstill")
+      self._model_slow_down_param = self._params.get_bool("DynamicExperimentalModelSlowDown")
+      self._curvature_param = self._params.get_bool("DynamicExperimentalCurvature")
+      self._has_lead_param = self._params.get_bool("DynamicExperimentalHasLead")
+      self._distance_based_param = self._params.get_bool("DynamicExperimentalDistanceBased")
+      self._distance_value_param = self._params.get("DynamicExperimentalDistanceValue")
+      self._speed_based_param = self._params.get_bool("DynamicExperimentalSpeedBased")
+      self._speed_value_param = self._params.get("DynamicExperimentalSpeedValue")
+      self._slowness_param = self._params.get_bool("DynamicExperimentalSlowness")
+
 
   def mode(self) -> str:
     return self._mode_manager.get_mode()
@@ -208,6 +247,7 @@ class DynamicExperimentalController:
 
     self._v_ego_kph = car_state.vEgo * 3.6
     self._v_cruise_kph = car_state.vCruise
+    self._has_lead = lead_one.status
     self._has_standstill = car_state.standstill
 
     # standstill detection
@@ -220,6 +260,24 @@ class DynamicExperimentalController:
     self._lead_filter.add_data(float(lead_one.status))
     lead_value = self._lead_filter.get_value() or 0.0
     self._has_lead_filtered = lead_value > WMACConstants.LEAD_PROB
+
+    # Track lead vehicle parameters if present
+    if lead_one.status:
+      # Track lead distance
+      self._lead_dist_filter.add_data(lead_one.dRel)
+      self._lead_dist = self._lead_dist_filter.get_value() or 0.0
+
+      # Track lead relative velocity
+      self._lead_vel_filter.add_data(lead_one.vRel)
+      current_vel = self._lead_vel_filter.get_value() or 0.0
+      self._lead_rel_vel = current_vel
+
+      # Calculate lead acceleration from velocity changes
+      if self._prev_lead_vel != 0:
+        accel = (current_vel - self._prev_lead_vel) / DT_MDL
+        self._lead_accel_filter.add_data(accel)
+        self._lead_accel = self._lead_accel_filter.get_value() or 0.0
+      self._prev_lead_vel = current_vel
 
     # MPC FCW detection
     fcw_filtered_value = self._mpc_fcw_filter.get_value() or 0.0
@@ -311,25 +369,28 @@ class DynamicExperimentalController:
       return
 
     # Standstill: use blended
-    if self._standstill_count > 3:
-      self._mode_manager.request_mode('blended', confidence=0.9)
-      return
+    if self._standstill_param:
+      if self._standstill_count > 3:
+        self._mode_manager.request_mode('blended', confidence=0.9)
+        return
 
     # Slow down scenarios: emergency for high urgency, normal for lower urgency
-    if self._has_slow_down:
-      if self._urgency > 0.7:
-        # Emergency: immediate blended mode for high urgency stops
-        self._mode_manager.request_mode('blended', confidence=1.0, emergency=True)
-      else:
-        # Normal: blended with urgency-based confidence
-        confidence = min(1.0, self._urgency * 1.5)
-        self._mode_manager.request_mode('blended', confidence=confidence)
-      return
+    if self._model_slow_down_param:
+      if self._has_slow_down:
+        if self._urgency > 0.7:
+          # Emergency: immediate blended mode for high urgency stops
+          self._mode_manager.request_mode('blended', confidence=1.0, emergency=True)
+        else:
+          # Normal: blended with urgency-based confidence
+          confidence = min(1.0, self._urgency * 1.5)
+          self._mode_manager.request_mode('blended', confidence=confidence)
+        return
 
     # Driving slow: use ACC (but not if actively slowing down)
-    if self._has_slowness and not self._has_slow_down:
-      self._mode_manager.request_mode('acc', confidence=0.8)
-      return
+    if self._slowness_param:
+      if self._has_slowness and not self._has_slow_down:
+        self._mode_manager.request_mode('acc', confidence=0.8)
+        return
 
     # Default: ACC
     self._mode_manager.request_mode('acc', confidence=0.7)
@@ -348,25 +409,46 @@ class DynamicExperimentalController:
       return
 
     # Slow down scenarios: emergency for high urgency, normal for lower urgency
-    if self._has_slow_down:
-      if self._urgency > 0.7:
-        # Emergency: immediate blended mode for high urgency stops
-        self._mode_manager.request_mode('blended', confidence=1.0, emergency=True)
-      else:
-        # Normal: blended with urgency-based confidence
-        confidence = min(1.0, self._urgency * 1.3)
-        self._mode_manager.request_mode('blended', confidence=confidence)
-      return
+    if self._model_slow_down_param:
+      if self._has_slow_down:
+        if self._urgency > 0.7:
+          # Emergency: immediate blended mode for high urgency stops
+          self._mode_manager.request_mode('blended', confidence=1.0, emergency=True)
+        else:
+          # Normal: blended with urgency-based confidence
+          confidence = min(1.0, self._urgency * 1.3)
+          self._mode_manager.request_mode('blended', confidence=confidence)
+        return
 
     # Standstill: use blended
-    if self._standstill_count > 3:
-      self._mode_manager.request_mode('blended', confidence=0.9)
-      return
+    if self._standstill_param:
+      if self._standstill_count > 3:
+        self._mode_manager.request_mode('blended', confidence=0.9)
+        return
+
+    # Advanced radar mode decision logic
+    if self._has_lead_filtered:
+      # If distance is to lead is below threshold, use blended
+      if self._distance_based_param:
+        if self._lead_dist < float(self._distance_value_param):
+          self._mode_manager.request_mode('blended', confidence=0.8)
+          return
+      if self._has_lead_param:
+        if self._lead_rel_vel < -0.5:
+          self._mode_manager.request_mode('blended', confidence=0.8)
+          return
+
+    # Speed-based decision: if speed is below set point, use blended
+    if self._speed_based_param:
+      if self._v_ego_kph < float(self._speed_value_param):
+        self._mode_manager.request_mode('blended', confidence=0.8)
+        return
 
     # Driving slow: use ACC (but not if actively slowing down)
-    if self._has_slowness and not self._has_slow_down:
-      self._mode_manager.request_mode('acc', confidence=0.8)
-      return
+    if self._slowness_param:
+      if self._has_slowness and not self._has_slow_down:
+        self._mode_manager.request_mode('acc', confidence=0.8)
+        return
 
     # Default: ACC
     self._mode_manager.request_mode('acc', confidence=0.7)
@@ -385,4 +467,5 @@ class DynamicExperimentalController:
 
     self._mode_manager.update()
     self._active = sm['selfdriveState'].experimentalMode and self._enabled
+
     self._frame += 1
