@@ -228,6 +228,12 @@ inline static std::unordered_map<std::string, uint32_t> keys = {
     {"OsmWayTest", PERSISTENT},
     {"RoadName", CLEAR_ON_ONROAD_TRANSITION},
 
+    {"RainbowMode", PERSISTENT},
+    {"VibePersonalityEnabled", PERSISTENT},
+    {"VibeAccelPersonalityEnabled", PERSISTENT},
+    {"VibeFollowPersonalityEnabled", PERSISTENT},
+    {"AccelPersonality", PERSISTENT},
+
     // Speed Limit Control
     {"SpeedLimitControl", PERSISTENT | BACKUP},
     {"SpeedLimitControlPolicy", PERSISTENT | BACKUP},

@@ -33,12 +33,13 @@ private:
   ScrollViewSP *cruisePanelScroller = nullptr;
   QWidget *cruisePanelScreen = nullptr;
   CustomAccIncrement *customAccIncrement = nullptr;
-
   SpeedLimitControlSubpanel *slcScreen;
   SpeedLimitControl *slcControl;
+  ParamControlSP *visionTurnSpeedControl = nullptr;
   DecControllerSubpanel *decScreen;
   ButtonControlSP *decManageBtn = nullptr;
-  ParamControlSP *visionTurnSpeedControl = nullptr;
-  ParamControlSP *dynamicpersonality = nullptr;
   ParamControlSP *dynamicExperimentalControl = nullptr;
+  ParamControlSP *vibePersonalityControl;
+  ParamControlSP *vibeAccelPersonalityControl;
+  ParamControlSP *vibeFollowPersonalityControl;
 };
