@@ -1,3 +1,4 @@
+#include <QPainterPath>
 #include "selfdrive/ui/qt/onroad/model.h"
 
 void ModelRenderer::draw(QPainter &painter, const QRect &surface_rect) {
@@ -34,6 +35,7 @@ void ModelRenderer::draw(QPainter &painter, const QRect &surface_rect) {
       drawLead(painter, lead_two, lead_vertices[1], surface_rect);
     }
   }
+  drawLeadStatus(painter, surface_rect.height(), surface_rect.width());
 
   painter.restore();
 }
@@ -92,9 +94,40 @@ void ModelRenderer::drawLaneLines(QPainter &painter) {
   }
 }
 
-void ModelRenderer::drawPath(QPainter &painter, const cereal::ModelDataV2::Reader &model, int height) {
+void ModelRenderer::drawPath(QPainter &painter, const cereal::ModelDataV2::Reader &model, int height, int width) {
   QLinearGradient bg(0, height, 0, 0);
-  if (experimental_mode) {
+  auto *s = uiState();
+  auto &sm = *(s->sm);
+
+  float v_ego = sm["carState"].getCarState().getVEgo();
+  bool rainbow = Params().getBool("RainbowMode");
+
+  // Get the current time in seconds for dynamic effect (speed of rainbow movement)
+  float time_offset = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count() / 1000.0f;
+
+  if (rainbow) {  // Rainbow Mode
+      const int max_len = track_vertices.length();
+      bg.setSpread(QGradient::PadSpread);  // Pad for a smooth gradient fade
+
+      for (int i = 0; i < max_len; i += 2) {  // Skip every other point for performance
+          if (track_vertices[i].y() < 0 || track_vertices[i].y() > height) continue;
+
+          float lin_grad_point = (height - track_vertices[i].y()) / height;
+
+          // Use easing for smoother color transitions
+          float eased_point = pow(lin_grad_point, 1.5f);  // Ease-in effect
+
+          // Dynamic hue with subtle, smooth animation
+          float path_hue = fmod(eased_point * 360.0 + (v_ego * 20.0) + (time_offset * 100.0), 360.0);
+
+          // Smooth alpha transition with longer fade
+          float alpha = util::map_val(eased_point, 0.2f, 0.75f, 0.8f, 0.0f);
+
+          // Use soft lightness for a premium feel
+          bg.setColorAt(eased_point, QColor::fromHslF(path_hue / 360.0, 1.0f, 0.55f, alpha));
+      }
+  } else if (experimental_mode) {
     // The first half of track_vertices are the points for the right side of the path
     const auto &acceleration = model.getAcceleration().getX();
     const int max_len = std::min<int>(track_vertices.length() / 2, acceleration.size());
@@ -128,6 +161,7 @@ void ModelRenderer::drawPath(QPainter &painter, const cereal::ModelDataV2::Reade
   painter.setBrush(bg);
   painter.drawPolygon(track_vertices);
 }
+
 
 void ModelRenderer::updatePathGradient(QLinearGradient &bg) {
   static const QColor throttle_colors[] = {
@@ -173,6 +207,208 @@ QColor ModelRenderer::blendColors(const QColor &start, const QColor &end, float 
       (1 - t) * start.alphaF() + t * end.alphaF());
 }
 
+void ModelRenderer::drawGaugeBackground(QPainter &painter, qreal centerX, qreal centerY) {
+    const qreal backgroundSize = GAUGE_SIZE * BACKGROUND_SIZE_MULTIPLIER;
+
+    // Draw circular background
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(BACKGROUND_COLOR);
+    painter.drawEllipse(QPointF(centerX, centerY), backgroundSize / 2, backgroundSize / 2);
+
+    // Draw border
+    QPen borderPen(BORDER_COLOR);
+    borderPen.setWidth(BORDER_PEN_WIDTH);
+    painter.setPen(borderPen);
+    painter.drawEllipse(QPointF(centerX, centerY), backgroundSize / 2 + 1, backgroundSize / 2 + 1);
+
+    // Draw background semicircle
+    QPen semicirclePen(GAUGE_BACKGROUND_COLOR);
+    semicirclePen.setWidth(GAUGE_PEN_WIDTH);
+    semicirclePen.setCapStyle(Qt::RoundCap);
+    painter.setPen(semicirclePen);
+    painter.drawArc(QRectF(centerX - GAUGE_SIZE / 2, centerY - GAUGE_SIZE / 2,
+                          GAUGE_SIZE, GAUGE_SIZE), 0, SEMICIRCLE_SPAN);
+}
+
+QColor ModelRenderer::getIndicatorColor(float absoluteValue, float lowThreshold, float highThreshold) {
+    if (absoluteValue < lowThreshold) {
+        return LOW_INDICATOR_COLOR;
+    } else if (absoluteValue < highThreshold) {
+        return MODERATE_INDICATOR_COLOR;
+    } else {
+        return HIGH_INDICATOR_COLOR;
+    }
+}
+
+int ModelRenderer::calculateSpanAngle(float absoluteValue, float maxValue) {
+    const int spanAngle = static_cast<int>(QUARTER_CIRCLE_SPAN * (absoluteValue / maxValue));
+    return std::clamp(spanAngle, 0, QUARTER_CIRCLE_SPAN);
+}
+
+void ModelRenderer::drawGaugeArc(QPainter &painter, qreal centerX, qreal centerY,
+                                float value, bool isPositive, const QString &label) {
+    const float absoluteValue = std::abs(value);
+
+    if (absoluteValue <= MIN_THRESHOLD) {
+        return; // Skip drawing if value is too small
+    }
+
+    // Set up the arc rectangle
+    const QRectF arcRect(centerX - GAUGE_SIZE / 2, centerY - GAUGE_SIZE / 2,
+                        GAUGE_SIZE, GAUGE_SIZE);
+
+    // Configure pen for the indicator arc
+    QPen indicatorPen;
+    indicatorPen.setWidth(GAUGE_PEN_WIDTH);
+    indicatorPen.setCapStyle(Qt::RoundCap);
+    painter.setPen(indicatorPen);
+
+    // Draw the arc based on direction
+    const int spanAngle = calculateSpanAngle(absoluteValue, 1.0f); // Adjust max value as needed
+    if (isPositive) {
+        painter.drawArc(arcRect, STARTING_ANGLE, spanAngle);
+    } else {
+        painter.drawArc(arcRect, STARTING_ANGLE, -spanAngle);
+    }
+
+    // Draw center label
+    painter.setPen(Qt::white);
+    QFont font = painter.font();
+    font.setPixelSize(20);
+    font.setBold(true);
+    painter.setFont(font);
+    painter.drawText(QRectF(centerX - 50, centerY + 10, 100, 20), Qt::AlignCenter, label);
+}
+
+void ModelRenderer::drawLeadStatus(QPainter &painter, int height, int width) {
+    auto *s = uiState();
+    auto &sm = *(s->sm);
+
+    if (!sm.alive("radarState")) return;
+
+    const auto &radar_state = sm["radarState"].getRadarState();
+    const auto &lead_one = radar_state.getLeadOne();
+    const auto &lead_two = radar_state.getLeadTwo();
+
+    // Check if we have any active leads
+    bool has_lead_one = lead_one.getStatus();
+    bool has_lead_two = lead_two.getStatus();
+
+    if (!has_lead_one && !has_lead_two) {
+        // Fade out status display
+        lead_status_alpha = std::max(0.0f, lead_status_alpha - 0.05f);
+        if (lead_status_alpha <= 0.0f) return;
+    } else {
+        // Fade in status display
+        lead_status_alpha = std::min(1.0f, lead_status_alpha + 0.1f);
+    }
+
+    // Draw status for each lead vehicle under its chevron
+    if (has_lead_one) {
+        drawLeadStatusAtPosition(painter, lead_one, lead_vertices[0], height, width, "L1");
+    }
+
+    if (has_lead_two && std::abs(lead_one.getDRel() - lead_two.getDRel()) > 3.0) {
+        drawLeadStatusAtPosition(painter, lead_two, lead_vertices[1], height, width, "L2");
+    }
+}
+
+void ModelRenderer::drawLeadStatusAtPosition(QPainter &painter,
+                                           const cereal::RadarState::LeadData::Reader &lead_data,
+                                           const QPointF &chevron_pos,
+                                           int height, int width,
+                                           const QString &label) {
+
+    float d_rel = lead_data.getDRel();
+    float v_rel = lead_data.getVRel();
+
+    // Calculate chevron size (same logic as drawLead)
+    float sz = std::clamp((25 * 30) / (d_rel / 3 + 30), 15.0f, 30.0f) * 2.35;
+
+    QFont content_font = painter.font();
+    content_font.setPixelSize(35);
+    content_font.setBold(true);
+    painter.setFont(content_font);
+
+    QFontMetrics fm(content_font);
+    auto *s = uiState();
+    bool is_metric = s->scene.is_metric;
+    QStringList text_lines;
+
+    // Distance
+    if (is_metric) {
+        text_lines.append(QString::number(d_rel, 'f', 0) + "m");
+    } else {
+        float d_feet = d_rel * 3.28084f; // Convert meters to feet
+        text_lines.append(QString::number(d_feet, 'f', 0) + "ft");
+    }
+
+    // Relative velocity (converted to more readable format)
+    float v_display;
+    if (is_metric) {
+        v_display = v_rel * 3.6f; // Convert m/s to km/h
+        text_lines.append(QString::number(v_display, 'f', 0) + " km/h");
+    } else {
+        v_display = v_rel * 2.23694f; // Convert m/s to mph
+        text_lines.append(QString::number(v_display, 'f', 0) + " mph");
+    }
+
+    // Distance in front of lead with seconds
+    if (v_rel < -0.1f) {
+        float distance_in_front = d_rel / (-v_rel);
+        QString distance_str = (distance_in_front > 0 && distance_in_front < 200) ?
+            QString::number(distance_in_front, 'f', 1) + "s" : "---";
+        text_lines.append(distance_str);
+    }
+
+    // Text box dimensions
+    float str_w = 150;  // Width of text area
+    float str_h = 45;   // Height per line
+
+    // Position text below chevron, centered horizontally
+    float text_x = chevron_pos.x() - str_w / 2;
+    float text_y = chevron_pos.y() + sz + 15;
+
+    // Clamp to screen bounds
+    text_x = std::clamp(text_x, 10.0f, (float)width - str_w - 10);
+
+    // Shadow offset
+    QPoint shadow_offset(2, 2);
+
+    // Draw each line of text with shadow
+    for (int i = 0; i < text_lines.size(); ++i) {
+        if (!text_lines[i].isEmpty()) {
+            QRect textRect(text_x, text_y + (i * str_h), str_w, str_h);
+
+            // Draw shadow
+            painter.setPen(QColor(0x0, 0x0, 0x0, (int)(200 * lead_status_alpha)));
+            painter.drawText(textRect.translated(shadow_offset.x(), shadow_offset.y()),
+                           Qt::AlignBottom | Qt::AlignHCenter, text_lines[i]);
+
+            // Determine text color based on line and danger level
+            QColor text_color;
+            if (i == 0) { // Distance line
+                if (d_rel < 20.0f) {
+                    text_color = QColor(255, 80, 80, (int)(255 * lead_status_alpha)); // Red - danger
+                } else if (d_rel < 40.0f) {
+                    text_color = QColor(255, 200, 80, (int)(255 * lead_status_alpha)); // Yellow - caution
+                } else {
+                    text_color = QColor(80, 255, 120, (int)(255 * lead_status_alpha)); // Green - safe
+                }
+            } else {
+                text_color = QColor(0xff, 0xff, 0xff, (int)(255 * lead_status_alpha)); // White for other lines
+            }
+
+            // Draw main text
+            painter.setPen(text_color);
+            painter.drawText(textRect, Qt::AlignBottom | Qt::AlignHCenter, text_lines[i]);
+        }
+    }
+
+    // Reset pen
+    painter.setPen(Qt::NoPen);
+}
+
 void ModelRenderer::drawLead(QPainter &painter, const cereal::RadarState::LeadData::Reader &lead_data,
                              const QPointF &vd, const QRect &surface_rect) {
   const float speedBuff = 10.;
@@ -190,20 +426,53 @@ void ModelRenderer::drawLead(QPainter &painter, const cereal::RadarState::LeadDa
   }
 
   float sz = std::clamp((25 * 30) / (d_rel / 3 + 30), 15.0f, 30.0f) * 2.35;
-  float x = std::clamp<float>(vd.x(), 0.f, surface_rect.width() - sz / 2);
+  float raw_x = std::clamp<float>(vd.x(), 0.f, surface_rect.width() - sz / 2);
   float y = std::min<float>(vd.y(), surface_rect.height() - sz * 0.6);
 
-  float g_xo = sz / 5;
-  float g_yo = sz / 10;
+// Check if the change in position is large
+  float position_delta = std::abs(raw_x - hysteretic_x);
+  float threshold = 100.0f;  // Adjust this value to tune when smoothing kicks in
 
-  QPointF glow[] = {{x + (sz * 1.35) + g_xo, y + sz + g_yo}, {x, y - g_yo}, {x - (sz * 1.35) - g_xo, y + sz + g_yo}};
-  painter.setBrush(QColor(218, 202, 37, 255));
-  painter.drawPolygon(glow, std::size(glow));
+  if (position_delta > threshold) {
+    // For large changes, immediately update position
+    hysteretic_x = raw_x;
+  } else {
+    // For small changes, apply smoothing
+    hysteretic_x = (hysteresis_factor * raw_x) + ((1.0f - hysteresis_factor) * hysteretic_x);
+  }
 
-  // chevron
-  QPointF chevron[] = {{x + (sz * 1.25), y + sz}, {x, y}, {x - (sz * 1.25), y + sz}};
-  painter.setBrush(QColor(201, 34, 49, fillAlpha));
-  painter.drawPolygon(chevron, std::size(chevron));
+  float x = hysteretic_x;  // Use smoothed x value instead of raw_x
+
+
+
+  // Set up the pen for drawing
+  QPen pen;
+  pen.setCapStyle(Qt::RoundCap);  // Round ends of the line
+  pen.setJoinStyle(Qt::RoundJoin);  // Round corners
+
+  // Disable fill
+  painter.setBrush(Qt::NoBrush);
+
+
+  // Draw the outer glow effect
+  pen.setColor(QColor(218, 202, 37, 255));  // Yellow glow color
+  pen.setWidth(10);  // Thicker width for glow
+  painter.setPen(pen);
+
+  // Create path for the line
+  QPainterPath path;
+  path.moveTo(x + (sz * 1.35), y + sz);   // right point
+  path.lineTo(x, y); // top point
+  path.lineTo(x - (sz * 1.35), y + sz);  // left point
+
+  painter.drawPath(path);  // Draw the glow
+
+  // Draw the main line
+  pen.setColor(QColor(201, 34, 49, fillAlpha));  // Red color with calculated opacity
+  pen.setWidth(7);  // Slightly thinner than the glow
+  painter.setPen(pen);
+  painter.drawPath(path);  // Draw the main line
+
 }
 
 // Projects a point in car to space to the corresponding point in full frame image space.

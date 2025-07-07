@@ -34,14 +34,28 @@ protected:
   bool mapToScreen(float in_x, float in_y, float in_z, QPointF *out);
   void mapLineToPolygon(const cereal::XYZTData::Reader &line, float y_off, float z_off,
                         QPolygonF *pvd, int max_idx, bool allow_invert = true);
+  void drawLeadStatus(QPainter &painter, int height, int width);
+  void drawLeadStatusAtPosition(QPainter &painter,
+                             const cereal::RadarState::LeadData::Reader &lead_data,
+                             const QPointF &chevron_pos,
+                             int height, int width,
+                             const QString &label);
   void drawLead(QPainter &painter, const cereal::RadarState::LeadData::Reader &lead_data, const QPointF &vd, const QRect &surface_rect);
   void update_leads(const cereal::RadarState::Reader &radar_state, const cereal::XYZTData::Reader &line);
   virtual void update_model(const cereal::ModelDataV2::Reader &model, const cereal::RadarState::LeadData::Reader &lead);
   void drawLaneLines(QPainter &painter);
-  void drawPath(QPainter &painter, const cereal::ModelDataV2::Reader &model, int height);
-  virtual void drawPath(QPainter &painter, const cereal::ModelDataV2::Reader &model, const QRect &surface_rect) {;
-    drawPath(painter, model, surface_rect.height());
+  void drawPath(QPainter &painter, const cereal::ModelDataV2::Reader &model, int height, int width);
+  virtual void drawPath(QPainter &painter, const cereal::ModelDataV2::Reader &model, const QRect &surface_rect) {
+    drawPath(painter, model, surface_rect.height(), surface_rect.width());
   }
+
+  // Gauge helper methods
+  void drawGaugeBackground(QPainter &painter, qreal centerX, qreal centerY);
+  void drawGaugeArc(QPainter &painter, qreal centerX, qreal centerY,
+                    float value, bool isPositive, const QString &label);
+  QColor getIndicatorColor(float absoluteValue, float lowThreshold, float highThreshold);
+  int calculateSpanAngle(float absoluteValue, float maxValue);
+
   void updatePathGradient(QLinearGradient &bg);
   QColor blendColors(const QColor &start, const QColor &end, float t);
 
@@ -58,4 +72,30 @@ protected:
   QPointF lead_vertices[2] = {};
   Eigen::Matrix3f car_space_transform = Eigen::Matrix3f::Zero();
   QRectF clip_region;
+
+  // Gauge configuration constants
+  static constexpr qreal GAUGE_SIZE = 140.0;
+  static constexpr qreal BACKGROUND_SIZE_MULTIPLIER = 1.4;
+  static constexpr qreal GAUGE_PEN_WIDTH = 30.0;
+  static constexpr qreal BORDER_PEN_WIDTH = 2.0;
+  static constexpr int SEMICIRCLE_SPAN = 180 * 16;
+  static constexpr int QUARTER_CIRCLE_SPAN = 90 * 16;
+  static constexpr int STARTING_ANGLE = 90 * 16;
+  static constexpr qreal MIN_THRESHOLD = 0.01;
+
+  // Color constants - Note: QColor cannot be constexpr, use inline static const instead
+  inline static const QColor BACKGROUND_COLOR = QColor(0, 0, 0, 80);
+  inline static const QColor BORDER_COLOR = QColor(0, 0, 0, 100);
+  inline static const QColor GAUGE_BACKGROUND_COLOR = QColor(50, 50, 50);
+  inline static const QColor LOW_INDICATOR_COLOR = QColor(23, 241, 66, 200);
+  inline static const QColor MODERATE_INDICATOR_COLOR = QColor(255, 166, 0, 200);
+  inline static const QColor HIGH_INDICATOR_COLOR = QColor(245, 0, 0, 200);
+
+  //chevron
+  float hysteretic_x = 0.0f;
+  const float hysteresis_factor = 0.15f;
+  float lead_status_alpha = 0.0f;
+  QPointF lead_status_pos;
+  QString lead_status_text;
+  QColor lead_status_color;
 };
