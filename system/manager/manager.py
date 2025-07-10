@@ -79,13 +79,16 @@ def manager_init() -> None:
     ("DynamicExperimentalControl", "0"),
     ("DynamicExperimentalStandstill", "1"),
     ("DynamicExperimentalModelSlowDown", "1"),
-    ("DynamicExperimentalCurvature", "0"),
+    ("DynamicExperimentalFCW", "1"),
     ("DynamicExperimentalHasLead", "0"),
     ("DynamicExperimentalDistanceBased", "0"),
     ("DynamicExperimentalDistanceValue", "30"),
     ("DynamicExperimentalSpeedBased", "0"),
     ("DynamicExperimentalSpeedValue", "25"),
     ("DynamicExperimentalSlowness", "0"),
+    ("DynamicExperimentalFollowLead", "0"),
+    ("DynamicExperimentalSlowerLead", "0"),
+    ("DynamicExperimentalStoppedLead", "0"),
 
     # Speed Limit Controller
     ("SpeedLimitControl", "0"),

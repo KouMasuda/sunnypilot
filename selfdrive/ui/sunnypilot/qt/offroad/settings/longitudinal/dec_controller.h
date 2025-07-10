@@ -18,6 +18,9 @@ class DecControllerSubpanel : public QWidget {
 public:
   explicit DecControllerSubpanel(QWidget *parent = nullptr);
 
+protected:
+  void showEvent(QShowEvent *event) override;
+
 signals:
   void backPress();
 
@@ -25,15 +28,19 @@ private slots:
   void updateToggles();
 
 private:
+  void showAllDescriptions();
   Params params;
 
   ParamControlSP *standstillControl = nullptr;
   ParamControlSP *modelSlowDownControl = nullptr;
-  ParamControlSP *curvatureControl = nullptr;
+  ParamControlSP *fcwControl = nullptr;
   ParamControlSP *hasLeadControl = nullptr;
+  ParamControlSP *slowerLeadControl = nullptr;
+  ParamControlSP *stoppedLeadControl = nullptr;
   ParamControlSP *distanceBasedControl = nullptr;
   ParamControlSP *speedBasedControl = nullptr;
   ParamControlSP *slownessControl = nullptr;
+  ParamControlSP *followLeadControl = nullptr;
   OptionControlSP *distanceValueControl = nullptr;
   OptionControlSP *speedValueControl = nullptr;
 };
