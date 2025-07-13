@@ -63,7 +63,7 @@ class ControlsExt:
     modelv2 = sm['modelV2']
 
     if len(modelv2.laneLines):
-      if modelv2.laneLineProbs[1] > 0.5 and modelv2.laneLineProbs[2] > 0.5:
+      if modelv2.laneLineProbs[1] > 0.75 and modelv2.laneLineProbs[2] > 0.75:
         CC_SP.lanelineLeftY = modelv2.laneLines[1].y[0]
         CC_SP.lanelineRightY = modelv2.laneLines[2].y[0]
 
