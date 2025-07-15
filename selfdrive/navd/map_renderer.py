@@ -9,6 +9,7 @@ from cffi import FFI
 
 from openpilot.common.ffi_wrapper import suffix
 from openpilot.common.basedir import BASEDIR
+from openpilot.common.params import Params
 
 HEIGHT = WIDTH = SIZE = 256
 METERS_PER_PIXEL = 2
@@ -29,6 +30,32 @@ uint8_t* map_renderer_get_image(void *inst);
 void map_renderer_free_image(void *inst, uint8_t *buf);
 """)
   return ffi, ffi.dlopen(lib)
+
+
+def create_maptiler_renderer():
+  """Maptiler APIキーを使用してMap Rendererを初期化"""
+  params = Params()
+  api_key = params.get("MaptilerApiKey", encoding='utf-8')
+  
+  if not api_key:
+    print("警告: MaptilerApiKeyが設定されていません。デフォルト設定を使用します。")
+    print("set_maptiler_key.pyスクリプトを使用してAPIキーを設定してください。")
+    maps_host = None
+    token = None
+  else:
+    # Maptiler settings
+    maps_host = "https://api.maptiler.com"
+    token = api_key
+    print(f"Maptiler APIキーが見つかりました: {api_key[:8]}...")
+  
+  ffi, lib = get_ffi()
+  
+  # APIキーとホストを設定（NULLの場合はC側でデフォルト処理）
+  host_ptr = ffi.new("char[]", maps_host.encode()) if maps_host else ffi.NULL
+  token_ptr = ffi.new("char[]", token.encode()) if token else ffi.NULL
+  
+  renderer = lib.map_renderer_init(host_ptr, token_ptr)
+  return ffi, lib, renderer
 
 
 def wait_ready(lib, renderer, timeout=None):
@@ -74,8 +101,7 @@ def polyline_to_coords(p):
 if __name__ == "__main__":
   import matplotlib.pyplot as plt
 
-  ffi, lib = get_ffi()
-  renderer = lib.map_renderer_init(ffi.NULL, ffi.NULL)
+  ffi, lib, renderer = create_maptiler_renderer()
   wait_ready(lib, renderer)
 
   geometry = r"{yxk}@|obn~Eg@@eCFqc@J{RFw@?kA@gA?q|@Riu@NuJBgi@ZqVNcRBaPBkG@iSD{I@_H@cH?gG@mG@gG?aD@{LDgDDkVVyQLiGDgX@q_@@qI@qKhS{R~[}NtYaDbGoIvLwNfP_b@|f@oFnF_JxHel@bf@{JlIuxAlpAkNnLmZrWqFhFoh@jd@kX|TkJxH_RnPy^|[uKtHoZ~Um`DlkCorC``CuShQogCtwB_ThQcr@fk@sVrWgRhVmSb\\oj@jxA{Qvg@u]tbAyHzSos@xjBeKbWszAbgEc~@~jCuTrl@cYfo@mRn\\_m@v}@ij@jp@om@lk@y|A`pAiXbVmWzUod@xj@wNlTw}@|uAwSn\\kRfYqOdS_IdJuK`KmKvJoOhLuLbHaMzGwO~GoOzFiSrEsOhD}PhCqw@vJmnAxSczA`Vyb@bHk[fFgl@pJeoDdl@}}@zIyr@hG}X`BmUdBcM^aRR}Oe@iZc@mR_@{FScHxAn_@vz@zCzH~GjPxAhDlB~DhEdJlIbMhFfG|F~GlHrGjNjItLnGvQ~EhLnBfOn@p`@AzAAvn@CfC?fc@`@lUrArStCfSxEtSzGxM|ElFlBrOzJlEbDnC~BfDtCnHjHlLvMdTnZzHpObOf^pKla@~G|a@dErg@rCbj@zArYlj@ttJ~AfZh@r]LzYg@`TkDbj@gIdv@oE|i@kKzhA{CdNsEfOiGlPsEvMiDpLgBpHyB`MkB|MmArPg@|N?|P^rUvFz~AWpOCdAkB|PuB`KeFfHkCfGy@tAqC~AsBPkDs@uAiAcJwMe@s@eKkPMoXQux@EuuCoH?eI?Kas@}Dy@wAUkMOgDL" # noqa: E501
